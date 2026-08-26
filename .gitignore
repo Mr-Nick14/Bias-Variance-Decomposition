@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.ruff_cache/
+.ipynb_checkpoints/
+tmp/
+local_sources/
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
