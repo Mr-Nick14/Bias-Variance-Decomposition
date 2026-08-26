@@ -1,0 +1,5 @@
+model,cv_folds,best_cv_rmse,best_params
+Polynomial Ridge,5,0.34444444227960846,"{'polynomialfeatures__degree': 7, 'ridge__alpha': 0.001}"
+KNN,5,0.35205378985027513,{'kneighborsregressor__n_neighbors': 20}
+Random Forest,5,0.3671863508781537,"{'max_depth': 7, 'min_samples_leaf': 6}"
+Decision Tree,5,0.3777427999774573,"{'max_depth': 6, 'min_samples_leaf': 6}"
