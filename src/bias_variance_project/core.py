@@ -6,8 +6,6 @@ import numpy as np
 
 
 def true_function(x: np.ndarray) -> np.ndarray:
-    """Return the regression function used to generate synthetic targets."""
-
     x = np.asarray(x, dtype=float)
     return np.sin(2.0 * x) + 0.2 * x**2
 
@@ -18,10 +16,6 @@ def generate_synthetic(
     seed: int,
     x_domain: tuple[float, float] = (-3.0, 3.0),
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Generate one sample from Y = f(X) + epsilon."""
-
-    if n_samples < 2:
-        raise ValueError("n_samples must be at least 2")
     if sigma < 0:
         raise ValueError("sigma must be non-negative")
 
@@ -37,15 +31,7 @@ def generate_training_sets(
     sigma: float,
     data_seed: int,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Generate a reusable sequence of independent training samples."""
-
-    if n_repeats < 2:
-        raise ValueError("n_repeats must be at least 2")
-
-    return [
-        generate_synthetic(n_train, sigma, data_seed + repeat)
-        for repeat in range(n_repeats)
-    ]
+    return [generate_synthetic(n_train, sigma, data_seed + repeat) for repeat in range(n_repeats)]
 
 
 def bias_variance_decomposition(
@@ -78,12 +64,13 @@ def bias_variance_decomposition(
     test_rng = np.random.default_rng(test_noise_seed)
 
     for repeat, (x_train, y_train) in enumerate(training_sets):
-        # Model randomness has a separate schedule from training-data randomness.
+        # A separate model seed keeps algorithm randomness independent of the
+        # training sample that happens to have the same repeat number.
         model = make_model(model_seed + repeat)
         model.fit(x_train, y_train)
         predictions[repeat] = np.asarray(model.predict(x_eval)).reshape(-1)
 
-        # Test noise is independent of every training sample and model fit.
+        # Empirical MSE gets fresh noise instead of reusing noise seen in fit.
         noisy_targets[repeat] = f_true + test_rng.normal(0.0, sigma, len(x_eval))
 
     mean_prediction = predictions.mean(axis=0)

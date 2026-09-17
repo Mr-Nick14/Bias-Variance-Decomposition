@@ -63,12 +63,8 @@ def test_monte_carlo_decomposition_matches_squared_error_identity():
 
     assert predictions.shape == (160, 120)
     assert abs(result["decomposition_gap"]) < 0.015
-    assert result["expected_mse"] == (
-        result["bias2"] + result["variance"] + result["noise"]
-    )
-    assert result["bias2"] == (
-        result["bias2_raw"] - result["bias2_mc_correction"]
-    )
+    assert result["expected_mse"] == (result["bias2"] + result["variance"] + result["noise"])
+    assert result["bias2"] == (result["bias2_raw"] - result["bias2_mc_correction"])
     assert result["bias2_mc_correction"] == result["variance"] / 160
     assert np.isfinite(list(result.values())).all()
 

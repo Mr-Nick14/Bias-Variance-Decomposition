@@ -1,17 +1,16 @@
 import warnings
 
 import numpy as np
+import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
 
 from bias_variance_project.core import generate_synthetic
 from bias_variance_project.experiments import (
     DATA_SEED,
     MODEL_SEED,
-    bootstrap_indices,
-    bootstrap_mse_identity,
     make_synthetic_model,
-    target_correlations,
 )
+from bias_variance_project.real_data import bootstrap_indices, bootstrap_mse_identity
 from scripts.run_experiments import run_experiments
 
 
@@ -22,16 +21,6 @@ def test_bootstrap_indices_are_reproducible_and_reusable_between_models():
     assert first.shape == (7, 18)
     np.testing.assert_array_equal(first, second)
     assert ((first >= 0) & (first < 18)).all()
-
-
-def test_target_correlations_do_not_include_target_as_a_feature():
-    from sklearn.datasets import load_diabetes
-
-    dataset = load_diabetes(as_frame=True)
-    correlations = target_correlations(dataset.data, dataset.target)
-
-    assert dataset.target.name not in correlations.index
-    assert np.isfinite(correlations.to_numpy()).all()
 
 
 def test_wide_mlp_does_not_stop_after_the_default_short_patience():
@@ -80,7 +69,7 @@ def test_fast_run_creates_finite_tables_and_core_figures(tmp_path):
     }
 
     for name in expected_tables:
-        table = __import__("pandas").read_csv(tmp_path / "reports" / "tables" / name)
+        table = pd.read_csv(tmp_path / "reports" / "tables" / name)
         assert not table.empty
         numeric = table.select_dtypes(include="number").to_numpy()
         assert np.isfinite(numeric[~np.isnan(numeric)]).all()

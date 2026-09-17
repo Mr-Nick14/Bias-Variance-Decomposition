@@ -7,12 +7,8 @@ import pandas as pd
 
 from bias_variance_project.experiments import (
     best_complexity_summary,
-    bootstrap_mse_identity,
     compare_cv_with_decomposition,
-    diabetes_complexity_experiment,
-    evaluate_real_datasets,
     mlp_training_history,
-    real_data_overview,
     run_complexity_experiment,
     run_mlp_capacity_experiment,
     run_train_size_and_noise_experiments,
@@ -29,6 +25,12 @@ from bias_variance_project.plotting import (
     plot_synthetic_eda,
     plot_train_size_and_noise,
 )
+from bias_variance_project.real_data import (
+    bootstrap_mse_identity,
+    diabetes_complexity_experiment,
+    evaluate_real_datasets,
+    real_data_overview,
+)
 
 
 def save_table(table: pd.DataFrame, path: Path) -> None:
@@ -37,8 +39,6 @@ def save_table(table: pd.DataFrame, path: Path) -> None:
 
 
 def run_experiments(project_root: Path, *, fast: bool = False) -> None:
-    """Run every study and write the resulting CSV and PNG files."""
-
     figures = project_root / "reports" / "figures"
     tables = project_root / "reports" / "tables"
     data_home = project_root / "data" / "scikit_learn"

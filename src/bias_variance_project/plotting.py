@@ -13,7 +13,7 @@ import pandas as pd
 import seaborn as sns
 
 from .core import generate_synthetic, true_function
-from .experiments import load_real_datasets, target_correlations
+from .real_data import load_real_datasets, target_correlations
 
 PALETTE = {
     "bias2": "#D55E00",
@@ -137,12 +137,8 @@ def plot_mlp_history(history: pd.DataFrame, path: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.8))
     axes[0].plot(history["epoch"], history["train_loss"], color="#0072B2")
     axes[0].set(title="Optimisation curve", xlabel="epoch", ylabel="regularised train loss")
-    axes[1].plot(
-        history["epoch"], history["train_rmse"], color="#009E73", label="train RMSE"
-    )
-    axes[1].plot(
-        history["epoch"], history["val_rmse"], color="#D55E00", label="validation RMSE"
-    )
+    axes[1].plot(history["epoch"], history["train_rmse"], color="#009E73", label="train RMSE")
+    axes[1].plot(history["epoch"], history["val_rmse"], color="#D55E00", label="validation RMSE")
     axes[1].axhline(0.35, color="#999999", ls=":", lw=1.5, label="noise sigma=0.35")
     best_epoch = int(history.loc[history["val_rmse"].idxmin(), "epoch"])
     axes[1].axvline(best_epoch, color="#555555", ls="--", lw=1, label=f"best epoch={best_epoch}")
