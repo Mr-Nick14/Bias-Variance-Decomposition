@@ -9,14 +9,15 @@
 \setmonofont{Menlo}
 \newfontfamily\cyrillicfonttt{Menlo}
 
-\usepackage[a4paper,left=22mm,right=22mm,top=20mm,bottom=22mm]{geometry}
+\usepackage[a4paper,left=21mm,right=21mm,top=19mm,bottom=21mm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage[section]{placeins}
 \usepackage[hidelinks]{hyperref}
 \usepackage{microtype}
 
-\setlength{\parindent}{1.25cm}
+\setlength{\parindent}{1.2cm}
 \setlength{\parskip}{2pt}
 \setlength{\emergencystretch}{2em}
 \graphicspath{{reports/figures/}}
@@ -30,15 +31,15 @@
 \maketitle
 
 \begin{abstract}
-В работе численно исследуется разложение квадратичной ошибки на Bias$^2$,
-Variance и Noise. Monte Carlo эксперименты сравнивают Polynomial Ridge,
-Decision Tree, KNN, Random Forest и MLP. Дополнительные эксперименты показывают
-влияние размера обучающей выборки и шума. На данных Diabetes и Linnerud
-устойчивость фиксированных конфигураций оценивается через repeated
-cross-validation и paired bootstrap.
+Проект исследует связь сложности регрессионной модели с bias, variance и
+квадратичной ошибкой. На синтетических данных компоненты оцениваются напрямую
+по независимым обучающим выборкам. На Diabetes и California Housing
+используются repeated cross-validation и paired bootstrap. Для реальных данных
+проверяется точное тождество квадратичной ошибки без подмены неизвестного
+смещения расстоянием до эталонной модели.
 \end{abstract}
 
-\section{Постановка задачи}
+\section{Синтетический эксперимент}
 
 Пусть $Y=f(X)+\varepsilon$, где
 $\mathbb E[\varepsilon\mid X]=0$ и
@@ -54,63 +55,89 @@ $\mathbb V[\varepsilon\mid X]=\sigma^2$. Для squared loss выполняет�
 \sigma^2.
 \]
 
-Синтетические данные генерируются для
-$f(x)=\sin(2x)+0.2x^2$ на $X\sim U[-3,3]$.
-Для каждой конфигурации используются 50 обучающих выборок по 160 объектов и
-общая evaluation grid из 240 точек. Evaluation grid не участвует в
-\texttt{fit}. Test noise генерируется независимо от train noise.
+Используется функция $f(x)=\sin(2x)+0.2x^2$ на $X\sim U[-3,3]$ и
+$\sigma=0.35$. Для каждой конфигурации строятся 50 независимых обучающих
+выборок по 160 объектов. Все модели получают одни и те же выборки и общую
+сетку из 240 точек, которая не передается в \texttt{fit}. Случайность данных,
+модели и тестового шума задается разными seed sequences. Variance Random
+Forest и MLP включает изменение данных и случайность алгоритма.
 
-Train datasets одинаковы для всех сравниваемых моделей. Data seed, model seed
-и test-noise seed принадлежат разным последовательностям. Для Random Forest и
-MLP model seed меняется между повторами. Поэтому их variance включает
-чувствительность к данным и stochasticity алгоритма.
+На конечном числе повторов наивная оценка squared bias содержит Monte Carlo
+добавку. Для $m$ повторов используется поправка
 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=\textwidth]{synthetic_eda.png}
-  \caption{Синтетическая выборка и распределение целевой переменной}
-\end{figure}
+\[
+\widehat{Bias^2}_{\mathrm{corr}}
+=
+\frac{1}{n}\sum_i\left(\bar f(x_i)-f(x_i)\right)^2
+-
+\frac{\widehat{Variance}}{m}.
+\]
 
-\section{Сложность модели}
-
-Для Polynomial Ridge изменяется степень полинома, для дерева и Random Forest
-максимальная глубина, для KNN число соседей, для MLP ширина скрытого слоя.
-Полиномиальные признаки и масштабирование находятся внутри sklearn Pipeline.
+Variance оценивается с поправкой Бесселя. Из-за несмещенности исправленный
+Bias$^2$ может быть немного отрицательным около нуля. Полосы на графике
+получены bootstrap перевыборкой 50 prediction vectors.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{complexity_tradeoff.png}
-  \caption{Компоненты ошибки при изменении сложности пяти моделей}
+  \caption{Компоненты ошибки и неопределенность Bias$^2$ и Variance}
 \end{figure}
 
 \input{report/generated/best_models.tex}
 
-Polynomial Ridge степени 7 показывает наименьший expected MSE около 0.130.
-KNN и MLP дают близкие значения около 0.143 и 0.145. У Decision Tree после
-глубины 5 уменьшение bias сопровождается ростом variance. Random Forest
-снижает variance относительно одиночного дерева благодаря усреднению.
+Polynomial Ridge степени 7 показывает expected MSE 0.1305. MLP ширины 256
+дает 0.1312, KNN с 12 соседями дает 0.1428. У дерева corrected Bias$^2$ после
+глубины 5 близок к нулю в пределах полосы, поэтому прежний визуальный хвост
+нельзя интерпретировать как дальнейшее устойчивое снижение bias. Рост ошибки
+дерева связан прежде всего с variance. У полиномиальной модели ошибка выходит
+на плато, а у однослойной MLP не образуется U-shaped curve на исследованной
+сетке.
 
-Empirical MSE близок к сумме Bias$^2$, Variance и Noise. Оставшийся
-gap связан с конечным числом Monte Carlo повторений и
-не является отдельным компонентом ошибки.
-
-\section{Размер выборки, шум и MLP}
+\section{Размер выборки и выбор сложности}
 
 Для Decision Tree глубины 6 увеличение train size с 40 до 320 объектов
-уменьшает variance примерно с 0.130 до 0.049. При росте $\sigma$ увеличивается
-не только $\sigma^2$, но и нестабильность fitted function на конечной выборке.
+снижает variance с 0.134 до 0.050. При $\sigma=0.9$ noise равен 0.81 и
+становится крупнейшей частью expected MSE.
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.95\textwidth]{train_size_noise_effects.png}
-  \caption{Влияние размера обучающей выборки и наблюдаемого шума}
+  \includegraphics[width=0.94\textwidth]{train_size_noise_effects.png}
+  \caption{Влияние размера обучающей выборки и уровня шума}
 \end{figure}
 
-MLP history строится через \texttt{warm\_start=True} и
-\texttt{max\_iter=1}. Каждый вызов \texttt{fit} добавляет одну эпоху Adam.
-Предупреждение о достижении одной итерации ожидаемо и подавляется только
-внутри этого цикла. StandardScaler обучается отдельно на train part как для
-признаков, так и для целевой переменной.
+GridSearchCV теперь использует выборку того же размера, что и Monte Carlo
+эксперимент. Набор уровней сложности также совпадает. CV и minimum expected
+MSE выбирают одинаковые параметры для четырех семейств из пяти. Для дерева
+CV выбирает глубину 4, а Monte Carlo минимум достигается при глубине 5.
+
+\input{report/generated/cv_selection.tex}
+
+Таблицы содержат wall-clock время полного набора fit для синтетических
+конфигураций и среднее время одного CV fit для реальных данных. Эти значения
+нужны для сравнения вычислительной цены, но зависят от компьютера.
+
+\section{Нейронная сеть}
+
+Отдельный эксперимент меняет ширину до 256, число скрытых слоев до трех и
+L2 параметр $\alpha$. Для ширины от 128 до 256 expected MSE почти не меняется.
+Variance также не растет. Это не подтверждает универсальный тезис о том, что
+любое увеличение ширины обязательно ведет к переобучению. На этой одномерной
+задаче Adam, L2 и остановка по отсутствию улучшения loss ограничивают
+эффективную сложность сети. Переход от двух слоев к трем повышает variance с
+0.0109 до 0.0128 и expected MSE с 0.1333 до 0.1352.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{mlp_capacity.png}
+  \caption{Ширина, глубина и L2 как независимые оси сложности MLP}
+\end{figure}
+
+История обучения строится через \texttt{partial\_fit}. Это сохраняет
+optimizer state между эпохами и не создает искусственных однопроходных
+вызовов \texttt{fit}. К тысячной эпохе train RMSE снижается до 0.326, ниже
+заданного $\sigma=0.35$. Validation RMSE остается около 0.374. Сеть теперь
+достаточно обучена, а разрыв между кривыми показывает цену подгонки шумовой
+части train sample.
 
 \begin{figure}[htbp]
   \centering
@@ -120,64 +147,81 @@ MLP history строится через \texttt{warm\_start=True} и
 
 \section{Реальные данные}
 
-Diabetes содержит 442 наблюдения и 10 признаков. Linnerud содержит 20
-наблюдений и 3 признака, а целевой переменной выбрана масса тела.
-Используются исходные признаки без дополнительного feature engineering.
-Операции масштабирования находятся внутри pipeline и обучаются заново в
-каждом fold.
+Diabetes содержит 442 наблюдения и 10 признаков. California Housing содержит
+20640 наблюдений. Для практичного полного запуска один раз выбираются 5000
+строк по фиксированному seed. Исходный датасет загружается средствами
+scikit-learn и остается в локальном cache. Масштабирование Ridge и MLP
+находится внутри Pipeline и обучается заново на каждом fold.
 
-Фиксированные конфигурации Dummy, Ridge, Decision Tree, Random Forest,
-Gradient Boosting и MLP оцениваются на одинаковых разбиениях RepeatedKFold с
-5 folds и 3 повторами. Это сравнение заданных конфигураций, а не поиск лучшего
-представителя каждого семейства.
+Модели сравниваются на одинаковых разбиениях RepeatedKFold с 5 folds и 3
+повторами. На Diabetes Ridge показывает RMSE $54.86\pm3.05$. MLP и Gradient
+Boosting находятся в пределах наблюдаемого разброса. На California Housing
+MLP показывает RMSE $0.570\pm0.019$, Random Forest дает $0.612\pm0.021$.
+Dummy заметно хуже обучаемых моделей на обоих наборах.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{real_model_comparison.png}
-  \caption{Средний RMSE и стандартное отклонение на repeated CV}
+  \caption{Repeated cross-validation на двух реальных наборах}
 \end{figure}
 
 \input{report/generated/real_models.tex}
 
-На Diabetes минимальный средний RMSE показывает Ridge со значением около
-54.86. MLP, Gradient Boosting и Random Forest находятся рядом, поэтому
-результат не поддерживает общий вывод о превосходстве одного семейства.
-На Linnerud средний $R^2$ отрицателен у всех конфигураций, а разброс RMSE
-велик. Двадцати наблюдений недостаточно для устойчивого ранжирования моделей.
+\section{Сложность на Diabetes}
 
-\section{Paired bootstrap}
-
-Для каждого датасета bootstrap indices генерируются заранее и повторно
-используются всеми моделями. Model seed остаётся независимым от bootstrap
-seed. Истинная функция регрессии на реальных данных неизвестна. Поэтому
-\texttt{bootstrap\_variance} измеряет чувствительность к перевыборке, а
-\texttt{proxy\_bias2} вычисляется относительно Gradient Boosting reference
-model. Эти величины не образуют точное классическое разложение.
+Для одного train-test split используются общие 30 bootstrap samples. У Ridge
+усиление регуляризации снижает variance со 106 до 51, при этом средний
+bootstrap MSE остается около 2885. У дерева минимум среднего bootstrap MSE
+наблюдается при глубине 2, после чего variance быстро растет. Для KNN variance
+падает с ростом числа соседей. У MLP ширина 64 устойчивее ширины 128 при всех
+трех значениях $\alpha$. Таким образом, реальная часть исследует не только
+фиксированные конфигурации, но и траектории сложности на десяти признаках.
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\textwidth]{real_proxy_decomposition.png}
-  \caption{Bootstrap variance и proxy bias на реальных данных}
+  \includegraphics[width=\textwidth]{diabetes_complexity.png}
+  \caption{Ошибка и bootstrap variance при изменении сложности на Diabetes}
 \end{figure}
 
-На Diabetes Decision Tree имеет наибольшую bootstrap variance среди
-рассмотренных конфигураций. Для Linnerud proxy оценки особенно чувствительны к
-малому train split и рассматриваются только как диагностика стабильности.
+\section{Точное bootstrap тождество}
 
-\section{Ограничения и выводы}
+Истинная regression function на реальных данных неизвестна. Поэтому bias и
+irreducible noise раздельно не оцениваются. Для фиксированного test set и
+prediction matrix проверяется точное тождество
 
-Monte Carlo оценки используют конечное число повторений. Оси сложности разных
-семейств не сопоставимы численно. Variance Random Forest и MLP включает
-stochasticity алгоритма. На реальных данных неизвестны $f(x)$ и истинный
-уровень noise. Proxy bias зависит от reference model. Выводы по реальным
-данным относятся только к фиксированным конфигурациям, а Linnerud слишком мал
-для уверенного выбора модели.
+\[
+\frac{1}{B}\sum_{b=1}^{B}MSE(y,\hat f_b)
+=
+MSE(y,\bar f)
++
+\frac{1}{n}\sum_i Var_b\left(\hat f_b(x_i)\right).
+\]
 
-Эксперименты воспроизводят основную закономерность bias-variance trade-off.
-Гибкость снижает bias до точки, после которой variance начинает увеличивать
-общую ошибку. Дополнительные данные уменьшают variance, а шум задаёт
-неустранимую часть ошибки. На реальных данных repeated CV и paired bootstrap
-позволяют обсуждать устойчивость без ложного отождествления proxy величин с
-точным Bias$^2$.
+Первое слагаемое объединяет систематическую ошибку относительно наблюдаемых
+targets, test noise и эффект выбранного split. Его нельзя называть Bias$^2$.
+Второе слагаемое измеряет нестабильность прогноза при перевыборке. Identity
+gap во всех строках находится на уровне машинной точности.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{real_bootstrap_identity.png}
+  \caption{Точное тождество для paired bootstrap predictions}
+\end{figure}
+
+\section{Выводы и ограничения}
+
+Классический bias-variance механизм ясно виден у Decision Tree, KNN и Random
+Forest. Для Polynomial Ridge после достаточной степени возникает плато. У MLP
+ширина сама по себе не вызывает роста variance на синтетической задаче, но
+дополнительная глубина и реальный многомерный набор показывают менее устойчивые
+режимы. Поэтому общий вывод формулируется по наблюдаемым траекториям, а не как
+универсальное свойство всех пяти семейств.
+
+Оценки зависят от конечного числа Monte Carlo и bootstrap повторов. Полосы
+неопределенности отражают перевыборку prediction vectors, а не полный повтор
+всего исследования. Время обучения зависит от оборудования. На реальных
+данных тождество разделяет ошибку среднего прогноза и нестабильность, но не
+разделяет bias и noise без дополнительных предположений о неизвестной
+регрессионной функции.
 
 \end{document}
