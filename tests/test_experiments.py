@@ -8,6 +8,7 @@ from bias_variance_project.experiments import (
     DATA_SEED,
     MODEL_SEED,
     bootstrap_indices,
+    bootstrap_mse_identity,
     make_synthetic_model,
     target_correlations,
 )
@@ -45,28 +46,44 @@ def test_wide_mlp_does_not_stop_after_the_default_short_patience():
     assert fitted_mlp.n_iter_ > 60
 
 
+def test_bootstrap_squared_loss_identity_is_exact_on_fixed_targets():
+    results = bootstrap_mse_identity(fast=True)
+
+    assert results["identity_gap"].abs().max() < 1e-10
+    np.testing.assert_allclose(
+        results["mean_bootstrap_mse"],
+        results["mean_prediction_mse"] + results["bootstrap_variance"],
+    )
+
+
 def test_fast_run_creates_finite_tables_and_core_figures(tmp_path):
     run_experiments(tmp_path, fast=True)
 
     expected_tables = {
         "best_complexity_summary.csv",
         "complexity_results.csv",
+        "cv_complexity_selection.csv",
+        "diabetes_complexity.csv",
+        "mlp_capacity_results.csv",
+        "real_bootstrap_identity.csv",
         "real_model_summary.csv",
-        "real_proxy_decomposition.csv",
         "train_size_noise_results.csv",
     }
     expected_figures = {
         "complexity_tradeoff.png",
+        "diabetes_complexity.png",
+        "mlp_capacity.png",
         "mlp_training_history.png",
+        "real_bootstrap_identity.png",
         "real_model_comparison.png",
-        "real_proxy_decomposition.png",
         "train_size_noise_effects.png",
     }
 
     for name in expected_tables:
         table = __import__("pandas").read_csv(tmp_path / "reports" / "tables" / name)
         assert not table.empty
-        assert np.isfinite(table.select_dtypes(include="number").to_numpy()).all()
+        numeric = table.select_dtypes(include="number").to_numpy()
+        assert np.isfinite(numeric[~np.isnan(numeric)]).all()
 
     for name in expected_figures:
         path = tmp_path / "reports" / "figures" / name

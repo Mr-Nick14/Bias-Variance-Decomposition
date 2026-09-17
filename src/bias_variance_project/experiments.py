@@ -1,12 +1,14 @@
 """Synthetic and real-data experiments used in the project."""
 
 import warnings
+from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.compose import TransformedTargetRegressor
-from sklearn.datasets import load_diabetes, load_linnerud
+from sklearn.datasets import fetch_california_housing, load_diabetes
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.exceptions import ConvergenceWarning
@@ -64,24 +66,30 @@ def make_synthetic_model(name: str, complexity: int, random_state: int):
             random_state=random_state,
         )
     if name == "MLP":
-        return TransformedTargetRegressor(
-            regressor=make_pipeline(
-                StandardScaler(),
-                MLPRegressor(
-                    hidden_layer_sizes=(complexity,),
-                    activation="tanh",
-                    solver="adam",
-                    alpha=1e-3,
-                    learning_rate_init=3e-3,
-                    max_iter=800,
-                    n_iter_no_change=60,
-                    tol=1e-5,
-                    random_state=random_state,
-                ),
-            ),
-            transformer=StandardScaler(),
-        )
+        return make_synthetic_mlp(complexity, 1, 1e-3, random_state)
     raise ValueError(f"Unknown model name {name!r}")
+
+
+def make_synthetic_mlp(width: int, depth: int, alpha: float, random_state: int):
+    """Build the MLP used for controlled width, depth and L2 experiments."""
+
+    return TransformedTargetRegressor(
+        regressor=make_pipeline(
+            StandardScaler(),
+            MLPRegressor(
+                hidden_layer_sizes=(width,) * depth,
+                activation="tanh",
+                solver="adam",
+                alpha=alpha,
+                learning_rate_init=3e-3,
+                max_iter=1_000,
+                n_iter_no_change=80,
+                tol=1e-5,
+                random_state=random_state,
+            ),
+        ),
+        transformer=StandardScaler(),
+    )
 
 
 def complexity_grids(fast: bool = False) -> dict[str, tuple[str, list[int]]]:
@@ -91,14 +99,14 @@ def complexity_grids(fast: bool = False) -> dict[str, tuple[str, list[int]]]:
             "Decision Tree": ("max_depth", [1, 4, 8]),
             "KNN": ("n_neighbors", [1, 7, 35]),
             "Random Forest": ("max_depth", [1, 4, 10]),
-            "MLP": ("hidden_width", [4, 16, 32]),
+            "MLP": ("hidden_width", [4, 32, 128]),
         }
     return {
         "Polynomial Ridge": ("degree", [1, 2, 3, 4, 5, 7, 9, 12]),
         "Decision Tree": ("max_depth", [1, 2, 3, 4, 5, 7, 10, 14]),
         "KNN": ("n_neighbors", [1, 2, 3, 5, 8, 12, 20, 35, 60]),
         "Random Forest": ("max_depth", [1, 2, 3, 4, 6, 8, 12]),
-        "MLP": ("hidden_width", [2, 4, 8, 16, 32, 64]),
+        "MLP": ("hidden_width", [2, 4, 8, 16, 32, 64, 128, 256]),
     }
 
 
@@ -124,6 +132,7 @@ def run_complexity_experiment(
             def make_model(seed, name=model_name, level=value):
                 return make_synthetic_model(name, level, seed)
 
+            started = perf_counter()
             if model_name == "MLP":
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", ConvergenceWarning)
@@ -144,6 +153,7 @@ def run_complexity_experiment(
                     model_seed=MODEL_SEED,
                     test_noise_seed=TEST_NOISE_SEED,
                 )
+            fit_time_sec = perf_counter() - started
 
             row = {
                 "model": model_name,
@@ -152,6 +162,7 @@ def run_complexity_experiment(
                 "n_train": n_train,
                 "sigma": sigma,
                 "n_repeats": n_repeats,
+                "fit_time_sec": fit_time_sec,
                 **result,
             }
             rows.append(row)
@@ -171,71 +182,140 @@ def best_complexity_summary(results: pd.DataFrame) -> pd.DataFrame:
         "complexity_label",
         "complexity",
         "bias2",
+        "bias2_ci_low",
+        "bias2_ci_high",
         "variance",
+        "variance_ci_low",
+        "variance_ci_high",
         "noise",
         "expected_mse",
         "empirical_mse",
         "decomposition_gap",
+        "fit_time_sec",
     ]
     return results.loc[indices, columns].sort_values("expected_mse").reset_index(drop=True)
 
 
-def tune_classical_models(*, fast: bool = False) -> pd.DataFrame:
-    """Tune four classical models on one synthetic sample with paired CV folds."""
+def compare_cv_with_decomposition(
+    complexity_results: pd.DataFrame, *, fast: bool = False
+) -> pd.DataFrame:
+    """Compare five-fold CV choices with Monte Carlo MSE optima."""
 
-    x_train, y_train = generate_synthetic(
-        n_samples=420 if fast else 700,
-        sigma=0.35,
-        seed=DATA_SEED,
-    )
+    x_train, y_train = generate_synthetic(n_samples=160, sigma=0.35, seed=DATA_SEED)
+    grids = complexity_grids(fast)
     searches = {
         "Polynomial Ridge": (
-            make_pipeline(PolynomialFeatures(), StandardScaler(), Ridge()),
-            {
-                "polynomialfeatures__degree": [1, 2, 3, 5, 7],
-                "ridge__alpha": [1e-3, 1e-2, 1e-1, 1.0],
-            },
+            make_pipeline(
+                PolynomialFeatures(include_bias=False),
+                StandardScaler(),
+                Ridge(alpha=1e-3),
+            ),
+            "polynomialfeatures__degree",
         ),
         "KNN": (
             make_pipeline(StandardScaler(), KNeighborsRegressor()),
-            {"kneighborsregressor__n_neighbors": [2, 3, 5, 8, 12, 20]},
+            "kneighborsregressor__n_neighbors",
         ),
         "Decision Tree": (
             DecisionTreeRegressor(random_state=MODEL_SEED),
-            {"max_depth": [2, 3, 4, 6, 8, 12], "min_samples_leaf": [1, 3, 6]},
+            "max_depth",
         ),
         "Random Forest": (
             RandomForestRegressor(
-                n_estimators=50 if fast else 140,
+                n_estimators=60,
+                max_features=1.0,
                 n_jobs=-1,
                 random_state=MODEL_SEED,
             ),
-            {"max_depth": [2, 4, 7, 12], "min_samples_leaf": [1, 3, 6]},
+            "max_depth",
+        ),
+        "MLP": (
+            make_synthetic_mlp(16, 1, 1e-3, MODEL_SEED),
+            "regressor__mlpregressor__hidden_layer_sizes",
         ),
     }
     folds = list(KFold(n_splits=5, shuffle=True, random_state=SPLIT_SEED).split(x_train))
     rows = []
-    for name, (estimator, param_grid) in searches.items():
+    for name, (estimator, parameter_name) in searches.items():
+        values = grids[name][1]
+        parameter_values = [(value,) for value in values] if name == "MLP" else values
         search = GridSearchCV(
             estimator,
-            param_grid,
+            {parameter_name: parameter_values},
             scoring="neg_mean_squared_error",
             cv=folds,
             n_jobs=1,
         )
-        search.fit(x_train, y_train)
+        started = perf_counter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            search.fit(x_train, y_train)
+        fit_time_sec = perf_counter() - started
+        selected = search.best_params_[parameter_name]
+        if name == "MLP":
+            selected = selected[0]
+        part = complexity_results[complexity_results["model"] == name]
+        expected_optimum = part.loc[part["expected_mse"].idxmin(), "complexity"]
         rows.append(
             {
                 "model": name,
+                "n_train": len(x_train),
                 "cv_folds": 5,
                 "best_cv_rmse": float(np.sqrt(-search.best_score_)),
-                "best_params": str(search.best_params_),
+                "cv_selected_complexity": selected,
+                "decomposition_optimum": expected_optimum,
+                "same_choice": bool(selected == expected_optimum),
+                "fit_time_sec": fit_time_sec,
             }
         )
     return pd.DataFrame(rows).sort_values("best_cv_rmse").reset_index(drop=True)
 
 
-def mlp_training_history(*, epochs: int = 180) -> pd.DataFrame:
+def run_mlp_capacity_experiment(*, fast: bool = False) -> pd.DataFrame:
+    """Study MLP width with L2 as a second axis, plus a depth sweep."""
+
+    repeats = 6 if fast else 20
+    x_eval = np.linspace(*X_DOMAIN, 200).reshape(-1, 1)
+    training_sets = generate_training_sets(repeats, 160, 0.35, DATA_SEED)
+    widths = [16, 64, 128] if fast else [16, 64, 128, 256]
+    alphas = [1e-3] if fast else [1e-5, 1e-3, 1e-1]
+    settings = [
+        ("width_alpha", width, 1, alpha)
+        for alpha in alphas
+        for width in widths
+    ]
+    settings.extend(("depth", 64, depth, 1e-3) for depth in ([1, 2] if fast else [2, 3]))
+
+    rows = []
+    for study, width, depth, alpha in settings:
+        started = perf_counter()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            result, _ = bias_variance_decomposition(
+                lambda seed, w=width, d=depth, a=alpha: make_synthetic_mlp(
+                    w, d, a, seed
+                ),
+                training_sets=training_sets,
+                x_eval=x_eval,
+                sigma=0.35,
+                model_seed=MODEL_SEED,
+                test_noise_seed=TEST_NOISE_SEED,
+            )
+        rows.append(
+            {
+                "study": study,
+                "width": width,
+                "depth": depth,
+                "alpha": alpha,
+                "n_repeats": repeats,
+                "fit_time_sec": perf_counter() - started,
+                **result,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def mlp_training_history(*, epochs: int = 1_000) -> pd.DataFrame:
     """Record train and validation metrics after each MLP epoch."""
 
     x, y = generate_synthetic(500, 0.35, DATA_SEED)
@@ -251,54 +331,61 @@ def mlp_training_history(*, epochs: int = 180) -> pd.DataFrame:
     x_val_scaled = x_scaler.transform(x_val)
     y_train_scaled = y_scaler.transform(y_train.reshape(-1, 1)).reshape(-1)
     model = MLPRegressor(
-        hidden_layer_sizes=(32, 16),
+        hidden_layer_sizes=(64, 64),
         activation="tanh",
         solver="adam",
         alpha=1e-3,
-        learning_rate_init=3e-3,
-        max_iter=1,
-        warm_start=True,
+        learning_rate_init=1e-3,
+        batch_size=64,
         random_state=MODEL_SEED,
     )
 
     rows = []
-    with warnings.catch_warnings():
-        # One iteration per fit is intentional because each fit represents one epoch.
-        warnings.simplefilter("ignore", ConvergenceWarning)
-        for epoch in range(1, epochs + 1):
-            model.fit(x_train_scaled, y_train_scaled)
-            train_prediction = y_scaler.inverse_transform(
-                model.predict(x_train_scaled).reshape(-1, 1)
-            ).reshape(-1)
-            val_prediction = y_scaler.inverse_transform(
-                model.predict(x_val_scaled).reshape(-1, 1)
-            ).reshape(-1)
-            rows.append(
-                {
-                    "epoch": epoch,
-                    "train_loss": float(model.loss_),
-                    "train_rmse": float(mean_squared_error(y_train, train_prediction) ** 0.5),
-                    "val_rmse": float(mean_squared_error(y_val, val_prediction) ** 0.5),
-                }
-            )
+    for epoch in range(1, epochs + 1):
+        model.partial_fit(x_train_scaled, y_train_scaled)
+        train_prediction = y_scaler.inverse_transform(
+            model.predict(x_train_scaled).reshape(-1, 1)
+        ).reshape(-1)
+        val_prediction = y_scaler.inverse_transform(
+            model.predict(x_val_scaled).reshape(-1, 1)
+        ).reshape(-1)
+        rows.append(
+            {
+                "epoch": epoch,
+                "train_loss": float(model.loss_),
+                "train_rmse": float(mean_squared_error(y_train, train_prediction) ** 0.5),
+                "val_rmse": float(mean_squared_error(y_val, val_prediction) ** 0.5),
+            }
+        )
     return pd.DataFrame(rows)
 
 
-def load_real_datasets() -> dict[str, tuple[pd.DataFrame, pd.Series]]:
-    """Load the two offline regression datasets used in the study."""
+def load_real_datasets(
+    *,
+    include_california: bool = True,
+    data_home: Path | None = None,
+) -> dict[str, tuple[pd.DataFrame, pd.Series]]:
+    """Load Diabetes and a deterministic 5,000-row California sample."""
 
     diabetes = load_diabetes(as_frame=True)
-    linnerud = load_linnerud(as_frame=True)
-    return {
+    datasets = {
         "Diabetes": (
             diabetes.data.copy(),
             diabetes.target.rename("disease_progression"),
         ),
-        "Linnerud-Weight": (
-            linnerud.data.copy(),
-            linnerud.target["Weight"].rename("Weight"),
-        ),
     }
+    if include_california:
+        california = fetch_california_housing(
+            data_home=data_home,
+            as_frame=True,
+        )
+        rng = np.random.default_rng(SPLIT_SEED)
+        selected = np.sort(rng.choice(len(california.data), size=5_000, replace=False))
+        datasets["California Housing"] = (
+            california.data.iloc[selected].reset_index(drop=True),
+            california.target.iloc[selected].reset_index(drop=True).rename("MedHouseVal"),
+        )
+    return datasets
 
 
 def target_correlations(x: pd.DataFrame, y: pd.Series) -> pd.Series:
@@ -309,9 +396,13 @@ def target_correlations(x: pd.DataFrame, y: pd.Series) -> pd.Series:
     return correlations.loc[correlations.abs().sort_values(ascending=False).index]
 
 
-def real_data_overview() -> pd.DataFrame:
+def real_data_overview(
+    *, include_california: bool = True, data_home: Path | None = None
+) -> pd.DataFrame:
     rows = []
-    for name, (x, y) in load_real_datasets().items():
+    for name, (x, y) in load_real_datasets(
+        include_california=include_california, data_home=data_home
+    ).items():
         q1, q3 = np.quantile(y, [0.25, 0.75])
         iqr = q3 - q1
         rows.append(
@@ -371,11 +462,16 @@ def real_model_zoo(random_state: int = MODEL_SEED) -> dict[str, object]:
     }
 
 
-def evaluate_real_datasets(*, fast: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+def evaluate_real_datasets(
+    *, fast: bool = False, data_home: Path | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate fixed configurations on identical repeated CV splits."""
 
     raw_rows = []
-    for dataset_name, (x, y) in load_real_datasets().items():
+    for dataset_name, (x, y) in load_real_datasets(
+        include_california=not fast,
+        data_home=data_home,
+    ).items():
         cv = RepeatedKFold(
             n_splits=5,
             n_repeats=1 if fast else 3,
@@ -403,8 +499,13 @@ def evaluate_real_datasets(*, fast: bool = False) -> tuple[pd.DataFrame, pd.Data
                     scoring={"mse": "neg_mean_squared_error", "r2": "r2"},
                     n_jobs=1,
                 )
-            for fold, (mse, r2) in enumerate(
-                zip(-scores["test_mse"], scores["test_r2"], strict=True)
+            for fold, (mse, r2, fit_time) in enumerate(
+                zip(
+                    -scores["test_mse"],
+                    scores["test_r2"],
+                    scores["fit_time"],
+                    strict=True,
+                )
             ):
                 raw_rows.append(
                     {
@@ -413,6 +514,7 @@ def evaluate_real_datasets(*, fast: bool = False) -> tuple[pd.DataFrame, pd.Data
                         "fold": fold,
                         "rmse": float(np.sqrt(mse)),
                         "r2": float(r2),
+                        "fit_time_sec": float(fit_time),
                     }
                 )
 
@@ -423,6 +525,7 @@ def evaluate_real_datasets(*, fast: bool = False) -> tuple[pd.DataFrame, pd.Data
             rmse_mean=("rmse", "mean"),
             rmse_std=("rmse", "std"),
             r2_mean=("r2", "mean"),
+            fit_time_sec=("fit_time_sec", "mean"),
         )
         .sort_values(["dataset", "rmse_mean"])
         .reset_index(drop=True)
@@ -439,13 +542,15 @@ def bootstrap_indices(n_samples: int, n_bootstrap: int, seed: int) -> np.ndarray
     return rng.integers(0, n_samples, size=(n_bootstrap, n_samples))
 
 
-def bootstrap_proxy_decomposition(*, fast: bool = False) -> pd.DataFrame:
-    """Estimate paired bootstrap variance and reference-model proxy bias."""
+def bootstrap_mse_identity(
+    *, fast: bool = False, data_home: Path | None = None
+) -> pd.DataFrame:
+    """Verify the exact squared-loss identity on paired bootstrap fits."""
 
     n_bootstrap = 10 if fast else 60
     rows = []
     for dataset_number, (dataset_name, (x, y)) in enumerate(
-        load_real_datasets().items()
+        load_real_datasets(include_california=not fast, data_home=data_home).items()
     ):
         x_train, x_test, y_train, y_test = train_test_split(
             x,
@@ -458,16 +563,8 @@ def bootstrap_proxy_decomposition(*, fast: bool = False) -> pd.DataFrame:
             n_bootstrap,
             BOOTSTRAP_SEED + dataset_number,
         )
-        reference = GradientBoostingRegressor(
-            n_estimators=250,
-            max_depth=2,
-            learning_rate=0.03,
-            random_state=MODEL_SEED,
-        ).fit(x_train, y_train)
-        reference_prediction = reference.predict(x_test)
-        residual_noise_proxy = mean_squared_error(y_test, reference_prediction)
-
         for model_name, base_model in real_model_zoo().items():
+            started = perf_counter()
             predictions = []
             for indices in sample_rows:
                 model = clone(base_model)
@@ -481,21 +578,114 @@ def bootstrap_proxy_decomposition(*, fast: bool = False) -> pd.DataFrame:
 
             prediction_matrix = np.asarray(predictions)
             mean_prediction = prediction_matrix.mean(axis=0)
+            mean_prediction_mse = float(mean_squared_error(y_test, mean_prediction))
+            bootstrap_variance = float(
+                np.mean(np.var(prediction_matrix, axis=0, ddof=0))
+            )
+            mean_bootstrap_mse = float(
+                np.mean((prediction_matrix - y_test.to_numpy()) ** 2)
+            )
             rows.append(
                 {
                     "dataset": dataset_name,
                     "model": model_name,
-                    "proxy_bias2": float(
-                        np.mean((mean_prediction - reference_prediction) ** 2)
-                    ),
-                    "bootstrap_variance": float(
-                        np.mean(np.var(prediction_matrix, axis=0, ddof=0))
-                    ),
-                    "residual_noise_proxy": float(residual_noise_proxy),
-                    "test_mse": float(mean_squared_error(y_test, mean_prediction)),
+                    "mean_prediction_mse": mean_prediction_mse,
+                    "bootstrap_variance": bootstrap_variance,
+                    "mean_bootstrap_mse": mean_bootstrap_mse,
+                    "identity_gap": mean_bootstrap_mse
+                    - mean_prediction_mse
+                    - bootstrap_variance,
                     "n_bootstrap": n_bootstrap,
+                    "fit_time_sec": perf_counter() - started,
                 }
             )
+    return pd.DataFrame(rows)
+
+
+def diabetes_complexity_experiment(*, fast: bool = False) -> pd.DataFrame:
+    """Trace real-data prediction error and bootstrap variance over complexity."""
+
+    x, y = load_real_datasets(include_california=False)["Diabetes"]
+    x_train, x_test, y_train, y_test = train_test_split(
+        x, y, test_size=0.25, random_state=SPLIT_SEED
+    )
+    n_bootstrap = 6 if fast else 30
+    sample_rows = bootstrap_indices(len(x_train), n_bootstrap, BOOTSTRAP_SEED)
+    settings = []
+    for alpha in ([0.1, 10.0, 100.0] if fast else [0.01, 0.1, 1.0, 10.0, 100.0]):
+        settings.append(("Ridge", "alpha", alpha, None, None))
+    for depth in ([1, 4, 8] if fast else [1, 2, 3, 5, 8, 12]):
+        settings.append(("Decision Tree", "max_depth", depth, None, None))
+    for neighbors in ([3, 12, 35] if fast else [2, 5, 10, 20, 35]):
+        settings.append(("KNN", "n_neighbors", neighbors, None, None))
+    widths = [16, 64] if fast else [16, 64, 128]
+    alphas = [1e-3] if fast else [1e-5, 1e-3, 1e-1]
+    for alpha in alphas:
+        for width in widths:
+            settings.append(("MLP", "hidden_width", width, alpha, 2))
+
+    rows = []
+    for model_name, complexity_label, complexity, alpha, depth in settings:
+        if model_name == "Ridge":
+            base_model = make_pipeline(StandardScaler(), Ridge(alpha=complexity))
+        elif model_name == "Decision Tree":
+            base_model = DecisionTreeRegressor(
+                max_depth=int(complexity), min_samples_leaf=5, random_state=MODEL_SEED
+            )
+        elif model_name == "KNN":
+            base_model = make_pipeline(
+                StandardScaler(), KNeighborsRegressor(n_neighbors=int(complexity))
+            )
+        else:
+            base_model = TransformedTargetRegressor(
+                regressor=make_pipeline(
+                    StandardScaler(),
+                    MLPRegressor(
+                        hidden_layer_sizes=(int(complexity),) * int(depth),
+                        activation="relu",
+                        alpha=float(alpha),
+                        early_stopping=True,
+                        max_iter=800,
+                        random_state=MODEL_SEED,
+                    ),
+                ),
+                transformer=StandardScaler(),
+            )
+
+        started = perf_counter()
+        predictions = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            for indices in sample_rows:
+                model = clone(base_model)
+                model.fit(x_train.iloc[indices], y_train.iloc[indices])
+                predictions.append(model.predict(x_test))
+        prediction_matrix = np.asarray(predictions)
+        mean_prediction = prediction_matrix.mean(axis=0)
+        mean_prediction_mse = float(mean_squared_error(y_test, mean_prediction))
+        bootstrap_variance = float(
+            np.mean(np.var(prediction_matrix, axis=0, ddof=0))
+        )
+        mean_bootstrap_mse = float(
+            np.mean((prediction_matrix - y_test.to_numpy()) ** 2)
+        )
+        rows.append(
+            {
+                "model": model_name,
+                "complexity_label": complexity_label,
+                "complexity": complexity,
+                "alpha": alpha,
+                "depth": depth,
+                "mean_prediction_mse": mean_prediction_mse,
+                "bootstrap_variance": bootstrap_variance,
+                "mean_bootstrap_mse": mean_bootstrap_mse,
+                "identity_gap": mean_bootstrap_mse
+                - mean_prediction_mse
+                - bootstrap_variance,
+                "n_bootstrap": n_bootstrap,
+                "fit_time_sec": perf_counter() - started,
+            }
+        )
     return pd.DataFrame(rows)
 
 

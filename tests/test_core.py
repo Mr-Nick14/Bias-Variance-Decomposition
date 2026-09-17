@@ -66,7 +66,23 @@ def test_monte_carlo_decomposition_matches_squared_error_identity():
     assert result["expected_mse"] == (
         result["bias2"] + result["variance"] + result["noise"]
     )
+    assert result["bias2"] == (
+        result["bias2_raw"] - result["bias2_mc_correction"]
+    )
+    assert result["bias2_mc_correction"] == result["variance"] / 160
     assert np.isfinite(list(result.values())).all()
+
+
+def test_bias_correction_removes_finite_repeat_variance_term():
+    rng = np.random.default_rng(71)
+    true_values = np.linspace(-1.0, 1.0, 80)
+    predictions = true_values + rng.normal(0.0, 0.8, size=(500, 80))
+    raw_bias2 = np.mean((predictions.mean(axis=0) - true_values) ** 2)
+    variance = np.mean(np.var(predictions, axis=0, ddof=1))
+    corrected_bias2 = raw_bias2 - variance / len(predictions)
+
+    assert raw_bias2 > 0
+    assert abs(corrected_bias2) < 0.001
 
 
 def test_decomposition_is_reproducible_with_fixed_seed_schedules():

@@ -4,6 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 tmp/
 local_sources/
+data/
 report/*.aux
 report/*.log
 report/*.out

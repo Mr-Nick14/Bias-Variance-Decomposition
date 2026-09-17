@@ -77,6 +77,20 @@ def plot_complexity_grid(results: pd.DataFrame, path: Path) -> None:
                 label=metric.replace("_", " "),
                 alpha=0.9 if metric != "empirical_mse" else 0.65,
             )
+        ax.fill_between(
+            part["complexity"],
+            part["bias2_ci_low"],
+            part["bias2_ci_high"],
+            color=PALETTE["bias2"],
+            alpha=0.12,
+        )
+        ax.fill_between(
+            part["complexity"],
+            part["variance_ci_low"],
+            part["variance_ci_high"],
+            color=PALETTE["variance"],
+            alpha=0.12,
+        )
         label = part["complexity_label"].iloc[0]
         ax.set(title=model, xlabel=label, ylabel="integrated squared error")
         if model == "KNN":
@@ -129,18 +143,61 @@ def plot_mlp_history(history: pd.DataFrame, path: Path) -> None:
     axes[1].plot(
         history["epoch"], history["val_rmse"], color="#D55E00", label="validation RMSE"
     )
+    axes[1].axhline(0.35, color="#999999", ls=":", lw=1.5, label="noise sigma=0.35")
     best_epoch = int(history.loc[history["val_rmse"].idxmin(), "epoch"])
     axes[1].axvline(best_epoch, color="#555555", ls="--", lw=1, label=f"best epoch={best_epoch}")
     axes[1].set(title="Generalisation during training", xlabel="epoch", ylabel="RMSE")
     axes[1].legend()
-    fig.suptitle("MLP (32, 16), tanh, Adam, L2 weight decay alpha=1e-3")
+    fig.suptitle("MLP (64, 64), tanh, Adam, L2 weight decay alpha=1e-3")
     fig.tight_layout()
     save_figure(fig, path)
 
 
-def plot_real_eda(output_dir: Path) -> list[Path]:
+def plot_mlp_capacity(results: pd.DataFrame, path: Path) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+    width_part = results[results["study"] == "width_alpha"]
+    for alpha, part in width_part.groupby("alpha"):
+        part = part.sort_values("width")
+        axes[0].plot(
+            part["width"],
+            part["expected_mse"],
+            marker="o",
+            label=f"alpha={alpha:g}",
+        )
+    axes[0].set(
+        title="Width and L2 regularisation",
+        xlabel="hidden width",
+        ylabel="expected MSE",
+    )
+    axes[0].legend()
+
+    depth_part = results[results["study"] == "depth"].sort_values("depth")
+    for metric in ["bias2", "variance", "expected_mse"]:
+        axes[1].plot(
+            depth_part["depth"],
+            depth_part[metric],
+            marker="o",
+            color=PALETTE[metric],
+            label=metric.replace("_", " "),
+        )
+    axes[1].set(
+        title="Depth at width 64 and alpha=1e-3",
+        xlabel="hidden layers",
+        ylabel="integrated squared error",
+    )
+    axes[1].legend()
+    fig.suptitle("MLP capacity is controlled by width, depth and L2")
+    fig.tight_layout()
+    save_figure(fig, path)
+
+
+def plot_real_eda(
+    output_dir: Path, *, include_california: bool = True, data_home: Path | None = None
+) -> list[Path]:
     paths = []
-    for name, (x, y) in load_real_datasets().items():
+    for name, (x, y) in load_real_datasets(
+        include_california=include_california, data_home=data_home
+    ).items():
         fig, axes = plt.subplots(1, 3, figsize=(13, 3.7))
         sns.histplot(y, kde=True, bins=min(20, max(7, len(y) // 4)), ax=axes[0], color="#0072B2")
         axes[0].set(title=f"{name} target", xlabel=y.name)
@@ -158,7 +215,8 @@ def plot_real_eda(output_dir: Path) -> list[Path]:
         axes[2].set(title="Feature-target correlations", xlabel="correlation")
         fig.suptitle(f"Exploratory view - {name}", fontsize=15)
         fig.tight_layout()
-        path = output_dir / f"eda_{name.lower().replace('-', '_')}.png"
+        slug = name.lower().replace("-", "_").replace(" ", "_")
+        path = output_dir / f"eda_{slug}.png"
         save_figure(fig, path)
         paths.append(path)
     return paths
@@ -178,26 +236,94 @@ def plot_real_model_comparison(summary: pd.DataFrame, path: Path) -> None:
     save_figure(fig, path)
 
 
-def plot_real_proxy_decomposition(proxy: pd.DataFrame, path: Path) -> None:
-    datasets = list(proxy["dataset"].drop_duplicates())
+def plot_real_bootstrap_identity(results: pd.DataFrame, path: Path) -> None:
+    datasets = list(results["dataset"].drop_duplicates())
     fig, axes = plt.subplots(1, len(datasets), figsize=(13, 4.8), squeeze=False)
     for ax, dataset in zip(axes.flat, datasets, strict=True):
-        part = proxy[proxy["dataset"] == dataset].sort_values("test_mse")
+        part = results[results["dataset"] == dataset].sort_values("mean_bootstrap_mse")
         x_pos = np.arange(len(part))
-        ax.bar(x_pos, part["proxy_bias2"], label="proxy bias²", color="#D55E00")
+        ax.bar(
+            x_pos,
+            part["mean_prediction_mse"],
+            label="MSE of mean prediction",
+            color="#D55E00",
+        )
         ax.bar(
             x_pos,
             part["bootstrap_variance"],
-            bottom=part["proxy_bias2"],
+            bottom=part["mean_prediction_mse"],
             label="bootstrap variance",
             color="#0072B2",
         )
+        ax.scatter(
+            x_pos,
+            part["mean_bootstrap_mse"],
+            marker="_",
+            s=260,
+            linewidth=2,
+            color="#111111",
+            label="mean bootstrap MSE",
+            zorder=3,
+        )
         ax.set_xticks(x_pos, labels=part["model"], rotation=35, ha="right")
-        ax.set(title=dataset, ylabel="proxy squared error")
+        ax.set(title=dataset, ylabel="test squared error")
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Real data bootstrap variance and reference-model proxy bias", fontsize=15)
+    fig.suptitle("Exact bootstrap squared-loss identity on fixed test sets", fontsize=15)
     fig.tight_layout(rect=(0, 0.08, 1, 0.96))
+    save_figure(fig, path)
+
+
+def plot_diabetes_complexity(results: pd.DataFrame, path: Path) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 8.2))
+    for ax, model in zip(
+        axes.flat,
+        ["Ridge", "Decision Tree", "KNN", "MLP"],
+        strict=True,
+    ):
+        part = results[results["model"] == model]
+        if model == "MLP":
+            for alpha, alpha_part in part.groupby("alpha"):
+                alpha_part = alpha_part.sort_values("complexity")
+                ax.plot(
+                    alpha_part["complexity"],
+                    alpha_part["mean_bootstrap_mse"],
+                    marker="o",
+                    label=f"MSE, alpha={alpha:g}",
+                )
+                ax.plot(
+                    alpha_part["complexity"],
+                    alpha_part["bootstrap_variance"],
+                    marker=".",
+                    ls="--",
+                    alpha=0.75,
+                    label=f"variance, alpha={alpha:g}",
+                )
+        else:
+            part = part.sort_values("complexity")
+            ax.plot(
+                part["complexity"],
+                part["mean_bootstrap_mse"],
+                marker="o",
+                color="#009E73",
+                label="mean bootstrap MSE",
+            )
+            ax.plot(
+                part["complexity"],
+                part["bootstrap_variance"],
+                marker="o",
+                ls="--",
+                color="#0072B2",
+                label="bootstrap variance",
+            )
+        ax.set(
+            title=model,
+            xlabel=part["complexity_label"].iloc[0],
+            ylabel="test squared error",
+        )
+        ax.legend(fontsize=8)
+    fig.suptitle("Complexity and bootstrap stability on Diabetes", fontsize=15)
+    fig.tight_layout()
     save_figure(fig, path)
 
 
