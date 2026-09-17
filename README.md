@@ -1,80 +1,64 @@
 # Bias-Variance Decomposition
 
-Исследовательский ML-проект о том, как сложность регрессионной модели,
-размер обучающей выборки и шум меняют bias, variance и итоговую ошибку.
+Проект начался с вопроса о том, насколько хорошо учебная картина
+bias-variance trade-off видна в обычном численном эксперименте. Интересно
+было сравнить несколько разных семейств регрессии на одних и тех же данных,
+а затем проверить, как картина меняется с размером выборки и уровнем шума.
 
 ![Bias-variance trade-off](reports/figures/complexity_tradeoff.png)
 
-## Что исследуется
+## Идея эксперимента
 
-Для squared loss на синтетических данных проверяется разложение
+На синтетических данных известны истинная функция и дисперсия шума, поэтому
+для squared loss можно напрямую оценить
 
 ```text
 E[(Y - f_hat_D(X))²] = Bias² + Variance + Noise
 ```
 
-Polynomial Ridge, Decision Tree, KNN, Random Forest и MLP обучаются на одних
-и тех же 50 независимых выборках. Оценка Bias² исправлена на Monte Carlo
-добавку `variance / n_repeats`. Полосы на графике показывают неопределенность
-из-за конечного числа повторов.
+Используются 50 независимых обучающих выборок по 160 объектов и общая сетка
+оценки, которая не участвует в обучении. Polynomial Ridge, Decision Tree,
+KNN, Random Forest и MLP получают одинаковые выборки. Это уменьшает случайный
+разброс при сравнении моделей.
 
-На Diabetes сложность меняется отдельно для Ridge, дерева, KNN и MLP. Для MLP
-также исследуются ширина, глубина и L2 regularisation. California Housing
-используется как второй реальный набор.
+Оценка Bias² исправлена на конечное число Monte Carlo повторов. Для реальных
+данных классическое разложение недоступно, поэтому там сравниваются repeated
+CV scores и bootstrap variance на общем test split.
 
-## Основные результаты
+## Результаты
 
-- Polynomial Ridge степени 7 дает expected MSE 0.1305
-- MLP ширины 256 дает 0.1312, но дальнейший рост ширины выходит на плато
-- Для дерева глубины 6 рост train size с 40 до 320 снижает variance с 0.134 до 0.050
-- CV и Monte Carlo выбирают одинаковую сложность для четырех семейств из пяти
-- На Diabetes Ridge получает RMSE 54.86, MLP и Gradient Boosting находятся рядом
-- На California Housing MLP получает RMSE 0.570, Random Forest получает 0.612
+| Модель | Выбранная сложность | Expected MSE |
+| --- | --- | --- |
+| Polynomial Ridge | degree 7 | 0.1305 |
+| MLP | width 256 | 0.1312 |
+| KNN | 12 neighbors | 0.1428 |
+| Random Forest | depth 4 | 0.1558 |
+| Decision Tree | depth 5 | 0.1802 |
 
-Широкая однослойная MLP на синтетике не показывает обязательного роста
-variance. Заметный компромисс появляется при увеличении глубины и на
-многомерном Diabetes. Поэтому выводы в отчете разделяют подтвержденные
-траектории и случаи, где ошибка лишь выходит на плато.
+У дерева глубины 6 увеличение train set с 40 до 320 объектов снижает variance
+с 0.134 до 0.050. GridSearchCV и Monte Carlo выбирают одинаковую сложность
+для четырех семейств из пяти.
 
-## Реальные данные и bootstrap
-
-Истинная regression function для реальных данных неизвестна. Проект не
-называет расстояние до другой модели оценкой bias. Вместо этого для общей
-prediction matrix проверяется точное squared-loss тождество
-
-```text
-mean bootstrap MSE = MSE of mean prediction + bootstrap variance
-```
-
-Первая часть включает систематическую ошибку относительно наблюдаемых targets,
-test noise и эффект split. Вторая измеряет нестабильность прогноза при
-перевыборке. Эти величины не являются классическим разделением Bias² и Noise.
+Ширина MLP на синтетике приводит к плато, а не к заметному росту variance.
+Рост нестабильности появляется при добавлении скрытых слоев и на Diabetes.
+На реальных данных Ridge получает RMSE 54.86 на Diabetes, а MLP получает
+RMSE 0.570 на выборке California Housing.
 
 ## Структура
 
 ```text
-research.ipynb
-report/
-    report.tex
-    report.pdf
-reports/
-    figures/
-    tables/
-scripts/
-    run_experiments.py
-    build_report.py
+research.ipynb                  ход исследования и промежуточные наблюдения
 src/bias_variance_project/
-    core.py
-    experiments.py
-    plotting.py
-tests/
+    core.py                     математическое разложение
+    experiments.py              синтетические эксперименты
+    real_data.py                CV и bootstrap на реальных данных
+    plotting.py                 графики
+scripts/                        запуск экспериментов и сборка отчета
+reports/                        рассчитанные таблицы и рисунки
+report/report.tex               итоговый анализ
 ```
 
-`core.py` показывает прямую реализацию Monte Carlo decomposition.
-`experiments.py` содержит отдельные исследовательские вопросы.
-`plotting.py` строит графики из рассчитанных таблиц.
-
-## Установка
+## Запуск
 
 Нужны Python 3.11 или 3.12, [uv](https://docs.astral.sh/uv/) и XeLaTeX.
 
@@ -82,72 +66,23 @@ tests/
 git clone git@github.com:Mr-Nick14/Bias-Variance-Decomposition.git
 cd Bias-Variance-Decomposition
 uv sync --locked --all-groups
-```
-
-California Housing скачивается средствами scikit-learn при первом полном
-запуске и сохраняется в `data/scikit_learn`. Каталог cache не добавляется в
-Git. В анализ попадает фиксированная выборка из 5000 строк.
-
-## Запуск
-
-Полный пересчет таблиц и графиков
-
-```bash
 uv run python scripts/run_experiments.py
+uv run jupyter execute research.ipynb --inplace
+uv run python scripts/build_report.py
 ```
 
-Быстрая локальная проверка без загрузки California Housing
+Первый полный запуск загружает California Housing в локальный каталог
+`data/scikit_learn`. Для короткой проверки без загрузки данных есть команда
 
 ```bash
 uv run python scripts/run_experiments.py --fast
 ```
 
-Выполнение notebook сверху вниз
-
-```bash
-uv run jupyter execute research.ipynb --inplace
-```
-
-Сборка PDF из `report/report.tex`
-
-```bash
-uv run python scripts/build_report.py
-```
-
-Пересчет результатов перед сборкой PDF
-
-```bash
-uv run python scripts/build_report.py --refresh
-```
-
-Те же действия доступны через `make run`, `make fast`, `make notebook`,
-`make report` и `make report-refresh`.
-
-## Воспроизводимость
-
-Train data, model initialization, test noise, bootstrap и CV splits используют
-разные seed sequences. Модели сравниваются на общих Monte Carlo samples,
-CV folds и bootstrap indices. Масштабирование находится внутри sklearn
-Pipeline и не видит validation или test part.
-
-Таблицы содержат время обучения. Оно помогает сравнить вычислительную цену
-моделей внутри одного запуска, но меняется между компьютерами.
-
-## Проверки
-
-```bash
-uv run pytest
-uv run ruff check .
-```
-
-Проверяются seed schedules, corrected Bias², приближенное synthetic
-decomposition, точное bootstrap identity и создание основных артефактов.
+Проверки запускаются через `uv run pytest` и `uv run ruff check .`.
 
 ## Ограничения
 
-- Monte Carlo и bootstrap оценки зависят от числа повторов
-- Полосы отражают перевыборку prediction vectors, а не полный повтор исследования
-- Variance Random Forest и MLP включает случайность обучающего алгоритма
-- Оси сложности разных семейств нельзя сравнивать напрямую
-- На реальных данных bias и irreducible noise раздельно не наблюдаются
-- Wall-clock время зависит от оборудования и фоновой нагрузки
+Monte Carlo интервалы отражают конечное число prediction vectors, а не полный
+повтор всего исследования. Variance Random Forest и MLP включает случайность
+обучающего алгоритма. На реальных данных ошибка среднего прогноза и bootstrap
+variance наблюдаются отдельно, но Bias² и irreducible noise разделить нельзя.
