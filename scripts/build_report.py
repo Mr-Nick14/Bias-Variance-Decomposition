@@ -58,14 +58,15 @@ def write_tables(project_root: Path) -> None:
             f"{row.bias2:.3f}",
             f"{row.variance:.3f}",
             f"{row.expected_mse:.3f}",
+            f"{row.fit_time_sec:.2f}",
         ]
         for row in best.itertuples()
     ]
     write_latex_table(
         generated / "best_models.tex",
-        ["Модель", "Параметр", "Bias$^2$", "Variance", "Expected MSE"],
+        ["Модель", "Параметр", "Bias$^2$", "Variance", "MSE", "Время, с"],
         best_rows,
-        "llrrr",
+        "llrrrr",
     )
 
     real = pd.read_csv(tables / "real_model_summary.csv")
@@ -76,14 +77,33 @@ def write_tables(project_root: Path) -> None:
             f"{row.rmse_mean:.3f}",
             f"{row.rmse_std:.3f}",
             f"{row.r2_mean:.3f}",
+            f"{row.fit_time_sec:.3f}",
         ]
         for row in real.itertuples()
     ]
     write_latex_table(
         generated / "real_models.tex",
-        ["Датасет", "Модель", "RMSE", "RMSE std", "$R^2$"],
+        ["Датасет", "Модель", "RMSE", "Std", "$R^2$", "Время, с"],
         real_rows,
-        "llrrr",
+        "llrrrr",
+    )
+
+    selection = pd.read_csv(tables / "cv_complexity_selection.csv")
+    selection_rows = [
+        [
+            latex_escape(row.model),
+            f"{row.cv_selected_complexity:g}",
+            f"{row.decomposition_optimum:g}",
+            "да" if row.same_choice else "нет",
+            f"{row.fit_time_sec:.2f}",
+        ]
+        for row in selection.itertuples()
+    ]
+    write_latex_table(
+        generated / "cv_selection.tex",
+        ["Модель", "CV", "Monte Carlo", "Совпало", "Время, с"],
+        selection_rows,
+        "lrrrr",
     )
 
 
@@ -91,12 +111,15 @@ def check_inputs(project_root: Path) -> None:
     required = [
         project_root / "reports" / "tables" / "best_complexity_summary.csv",
         project_root / "reports" / "tables" / "real_model_summary.csv",
+        project_root / "reports" / "tables" / "cv_complexity_selection.csv",
         project_root / "reports" / "figures" / "synthetic_eda.png",
         project_root / "reports" / "figures" / "complexity_tradeoff.png",
         project_root / "reports" / "figures" / "train_size_noise_effects.png",
         project_root / "reports" / "figures" / "mlp_training_history.png",
+        project_root / "reports" / "figures" / "mlp_capacity.png",
         project_root / "reports" / "figures" / "real_model_comparison.png",
-        project_root / "reports" / "figures" / "real_proxy_decomposition.png",
+        project_root / "reports" / "figures" / "real_bootstrap_identity.png",
+        project_root / "reports" / "figures" / "diabetes_complexity.png",
     ]
     missing = [path for path in required if not path.exists()]
     if missing:
