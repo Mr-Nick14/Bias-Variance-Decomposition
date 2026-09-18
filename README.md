@@ -80,6 +80,30 @@ uv run python scripts/run_experiments.py --fast
 
 Проверки запускаются через `uv run pytest` и `uv run ruff check .`.
 
+### Docker
+
+Для быстрого запуска без локальной настройки Python можно собрать контейнер
+
+```bash
+docker build -t bias-variance-lab .
+docker run --rm bias-variance-lab
+```
+
+По умолчанию выполняется короткий эксперимент. Полный запуск можно передать
+как другую команду. Кеш California Housing хранится в отдельном volume, а
+новые таблицы и графики записываются в локальный каталог `reports`.
+
+```bash
+docker run --rm \
+  -v bias-variance-data:/workspace/data \
+  -v "$PWD/reports:/workspace/reports" \
+  bias-variance-lab \
+  .venv/bin/python scripts/run_experiments.py
+```
+
+В этом образе нет XeLaTeX и системных шрифтов отчета. PDF собирается локально
+через `uv run python scripts/build_report.py`.
+
 ## Ограничения
 
 Monte Carlo интервалы отражают конечное число prediction vectors, а не полный
